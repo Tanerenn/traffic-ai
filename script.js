@@ -1,7 +1,7 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-// Simülasyon durumu
+
 let isRunning = false;
 let simTime = 0;
 let lastTime = 0;
@@ -722,3 +722,4 @@ if (vehicleCountInput && countDisplay) {
 drawRoads();
 drawTrafficLights({ NS: 'red', EW: 'red' });
 render(0);
+
