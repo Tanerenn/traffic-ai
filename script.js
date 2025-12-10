@@ -1,7 +1,6 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-
 let isRunning = false;
 let simTime = 0;
 let lastTime = 0;
@@ -16,7 +15,7 @@ const LANE_WIDTH = 40;
 const CENTER_X = 450;
 const CENTER_Y = 350;
 
-// Kavşak bölgesi tanımı
+// Kavşak bölgesi tanımı (Kritik Bölge)
 const INTERSECTION = {
   left: CENTER_X - ROAD_WIDTH,
   right: CENTER_X + ROAD_WIDTH,
@@ -24,73 +23,85 @@ const INTERSECTION = {
   bottom: CENTER_Y + ROAD_WIDTH
 };
 
-// Akıllı trafik ışığı sistemi
+// --- YAPAY ZEKA (AI) AYARLARI ---
+const AI_BRAIN = {
+  qTable: {},
+  learningRate: 0.1,
+  discountFactor: 0.9,
+  epsilon: 0.1,
+  
+  getState: function(nsWait, ewWait, currentGreen) {
+    const level = (n) => n === 0 ? '0' : (n < 3 ? 'L' : (n < 6 ? 'M' : 'H'));
+    return `${level(nsWait)}${level(ewWait)}${currentGreen}`;
+  },
+
+  getAction: function(state) {
+    if (Math.random() < this.epsilon) return Math.floor(Math.random() * 2);
+    const q0 = this.qTable[state + '_0'] || 0;
+    const q1 = this.qTable[state + '_1'] || 0;
+    return q0 >= q1 ? 0 : 1;
+  },
+
+  learn: function(oldState, action, reward, newState) {
+    const oldQ = this.qTable[oldState + '_' + action] || 0;
+    const maxNextQ = Math.max(
+      this.qTable[newState + '_0'] || 0,
+      this.qTable[newState + '_1'] || 0
+    );
+    const newQ = oldQ + this.learningRate * (reward + this.discountFactor * maxNextQ - oldQ);
+    this.qTable[oldState + '_' + action] = newQ;
+  }
+};
+
 const SMART_LIGHT = {
   currentGreen: 'NS',
   timeInCurrentState: 0,
-  minGreenTime: 8,
-  maxGreenTime: 25,
+  minGreenTime: 5,
   yellowTime: 3,
   isYellow: false,
-  yellowStartTime: 0
+  yellowStartTime: 0,
+  lastAction: 0,
+  lastState: null
 };
 
-// Klasik trafik ışığı döngüsü (saniye)
+// Klasik döngü
 const CLASSIC_CYCLE = {
-  NS_GREEN: 25,
-  NS_YELLOW: 3,
-  EW_GREEN: 25,
-  EW_YELLOW: 3
+  NS_GREEN: 25, NS_YELLOW: 3, EW_GREEN: 25, EW_YELLOW: 3
 };
 const CYCLE_TOTAL = CLASSIC_CYCLE.NS_GREEN + CLASSIC_CYCLE.NS_YELLOW + 
                     CLASSIC_CYCLE.EW_GREEN + CLASSIC_CYCLE.EW_YELLOW;
 
-// Gerçek trafik verileri
-const TRAFFIC_DATA = [
-  { time: 1, direction: 'N', count: 10  },
-  { time: 3, direction: 'W', count: 10},
-  { time: 3, direction: 'E', count: 10 },
-  { time: 3, direction: 'S', count: 2 },
-  { time: 27, direction: 'E', count: 2 },
-  { time: 29, direction: 'E', count: 1 },
-  { time: 31, direction: 'E', count: 2 },
-  { time: 45, direction: 'N', count: 1 },
-  { time: 56, direction: 'N', count: 1 },
-  { time: 78, direction: 'S', count: 1 },
-  { time: 80, direction: 'W', count: 1 },
-  { time: 91, direction: 'N', count: 1 },
-  { time: 96, direction: 'N', count: 4 },
-  { time: 98, direction: 'N', count: 3 },
-  { time: 104, direction: 'E', count: 3 },
-  { time: 107, direction: 'E', count: 2 },
-  { time: 109, direction: 'E', count: 3 },
-  { time: 115, direction: 'E', count: 2 },
-  { time: 118, direction: 'N', count: 2 },
-  { time: 126, direction: 'E', count: 1 }
-];
-
-let processedSpawns = new Set();
+// --- CANLI VERİ SİMÜLASYONU ---
 let spawnQueue = [];
+let lastSpawnCheck = 0;
 
-// Yoğunluk analizi
+function simulateLiveTraffic(currentTime) {
+  if (currentTime - lastSpawnCheck > 1) {
+    lastSpawnCheck = currentTime;
+    if (Math.random() < 0.99) { 
+      const dirs = ['N', 'S', 'E', 'W'];
+      const dir = dirs[Math.floor(Math.random() * dirs.length)];
+      spawnQueue.push({
+        direction: dir,
+        spawnTime: currentTime + 0.5
+      });
+    }
+  }
+}
+
 function analyzeTrafficDensity() {
   let nsWaiting = 0;
   let ewWaiting = 0;
-  
   vehicles.forEach(v => {
-    if (!v.hasEnteredIntersection && !v.checkPassedIntersection()) {
-      if (v.direction === 'N' || v.direction === 'S') {
-        nsWaiting++;
-      } else {
-        ewWaiting++;
-      }
+    if (!v.hasEnteredIntersection && !v.checkPassedIntersection() && v.speed < 20) {
+      if (v.direction === 'N' || v.direction === 'S') nsWaiting++;
+      else ewWaiting++;
     }
   });
-  
   return { nsWaiting, ewWaiting };
 }
 
-// Akıllı trafik ışığı kontrolü
+// --- IŞIK KONTROLÜ ---
 function updateSmartLights(dt) {
   const density = analyzeTrafficDensity();
   
@@ -104,30 +115,23 @@ function updateSmartLights(dt) {
     }
   } else {
     SMART_LIGHT.timeInCurrentState += dt;
-    
-    const currentIsNS = SMART_LIGHT.currentGreen === 'NS';
-    const currentWaiting = currentIsNS ? density.nsWaiting : density.ewWaiting;
-    const otherWaiting = currentIsNS ? density.ewWaiting : density.nsWaiting;
-    
-    let shouldSwitch = false;
-    
     if (SMART_LIGHT.timeInCurrentState >= SMART_LIGHT.minGreenTime) {
-      if (otherWaiting >= 2 && currentWaiting <= 1) {
-        shouldSwitch = true;
-      } else if (otherWaiting >= currentWaiting + 2 && otherWaiting >= 2) {
-        shouldSwitch = true;
-      } else if (currentWaiting === 0 && otherWaiting > 0) {
-        shouldSwitch = true;
-      } else if (currentWaiting === 1 && otherWaiting >= 3) {
-        shouldSwitch = true;
-      } else if (SMART_LIGHT.timeInCurrentState >= SMART_LIGHT.maxGreenTime) {
-        shouldSwitch = true;
+      const currentState = AI_BRAIN.getState(density.nsWaiting, density.ewWaiting, SMART_LIGHT.currentGreen);
+      
+      if (SMART_LIGHT.lastState) {
+        const totalWaiting = density.nsWaiting + density.ewWaiting;
+        const reward = -totalWaiting; 
+        AI_BRAIN.learn(SMART_LIGHT.lastState, SMART_LIGHT.lastAction, reward, currentState);
       }
-    }
-    
-    if (shouldSwitch) {
-      SMART_LIGHT.isYellow = true;
-      SMART_LIGHT.yellowStartTime = 0;
+
+      const action = AI_BRAIN.getAction(currentState);
+      SMART_LIGHT.lastState = currentState;
+      SMART_LIGHT.lastAction = action;
+
+      if (action === 1) {
+        SMART_LIGHT.isYellow = true;
+        SMART_LIGHT.yellowStartTime = 0;
+      }
     }
   }
   
@@ -144,30 +148,23 @@ function updateSmartLights(dt) {
   }
 }
 
-// Klasik trafik ışığı durumunu hesapla
 function getClassicLightState(time) {
   const cyclePos = time % CYCLE_TOTAL;
-  
-  if (cyclePos < CLASSIC_CYCLE.NS_GREEN) {
-    return { NS: 'green', EW: 'red' };
-  } else if (cyclePos < CLASSIC_CYCLE.NS_GREEN + CLASSIC_CYCLE.NS_YELLOW) {
-    return { NS: 'yellow', EW: 'red' };
-  } else if (cyclePos < CLASSIC_CYCLE.NS_GREEN + CLASSIC_CYCLE.NS_YELLOW + CLASSIC_CYCLE.EW_GREEN) {
-    return { NS: 'red', EW: 'green' };
-  } else {
-    return { NS: 'red', EW: 'yellow' };
-  }
+  if (cyclePos < CLASSIC_CYCLE.NS_GREEN) return { NS: 'green', EW: 'red' };
+  else if (cyclePos < CLASSIC_CYCLE.NS_GREEN + CLASSIC_CYCLE.NS_YELLOW) return { NS: 'yellow', EW: 'red' };
+  else if (cyclePos < CLASSIC_CYCLE.NS_GREEN + CLASSIC_CYCLE.NS_YELLOW + CLASSIC_CYCLE.EW_GREEN) return { NS: 'red', EW: 'green' };
+  else return { NS: 'red', EW: 'yellow' };
 }
 
-// Araç sınıfı
+// --- ARAÇ SINIFI ---
 class Vehicle {
   constructor(direction) {
     this.id = vehicleIdCounter++;
     this.direction = direction;
     this.width = direction === 'N' || direction === 'S' ? 28 : 45;
     this.height = direction === 'N' || direction === 'S' ? 45 : 28;
-    this.speed = 100;
-    this.maxSpeed = 100;
+    this.speed = 120;
+    this.maxSpeed = 120;
     this.color = this.getRandomColor();
     this.state = 'moving';
     this.inIntersection = false;
@@ -177,32 +174,28 @@ class Vehicle {
   }
   
   setInitialPosition() {
-    const stopMargin = 2;
+    const stopMargin = 3; 
     
     switch(this.direction) {
       case 'N':
         this.x = CENTER_X - LANE_WIDTH - this.width / 2;
-        this.y = -120; // Daha uzaktan başla
+        this.y = -150; 
         this.stopLine = CENTER_Y - ROAD_WIDTH - stopMargin;
-        this.exitLine = CENTER_Y + ROAD_WIDTH + 100;
         break;
       case 'S':
         this.x = CENTER_X + LANE_WIDTH - this.width / 2;
-        this.y = canvas.height + 120;
+        this.y = canvas.height + 150;
         this.stopLine = CENTER_Y + ROAD_WIDTH + this.height + stopMargin;
-        this.exitLine = CENTER_Y - ROAD_WIDTH - 100;
         break;
       case 'E':
-        this.x = canvas.width + 120;
+        this.x = canvas.width + 150;
         this.y = CENTER_Y - LANE_WIDTH - this.height / 2;
         this.stopLine = CENTER_X + ROAD_WIDTH + this.width + stopMargin;
-        this.exitLine = CENTER_X - ROAD_WIDTH - 100;
         break;
       case 'W':
-        this.x = -120;
+        this.x = -150;
         this.y = CENTER_Y + LANE_WIDTH - this.height / 2;
         this.stopLine = CENTER_X - ROAD_WIDTH - stopMargin;
-        this.exitLine = CENTER_X + ROAD_WIDTH + 100;
         break;
     }
   }
@@ -212,16 +205,31 @@ class Vehicle {
     return colors[Math.floor(Math.random() * colors.length)];
   }
   
+  // Çapraz trafik kontrolü (YENİ VE KRİTİK FONKSİYON)
+  isIntersectionBlockedByCrossTraffic(others) {
+    const myAxis = (this.direction === 'N' || this.direction === 'S') ? 'NS' : 'EW';
+    
+    return others.some(v => {
+      // Kendimi kontrol etme
+      if (v.id === this.id) return false;
+      
+      const otherAxis = (v.direction === 'N' || v.direction === 'S') ? 'NS' : 'EW';
+      
+      // Sadece ÇAPRAZ trafikle ilgileniyorum.
+      // Aynı yöndeki (veya tam karşımdaki) araçla çarpışmam mümkün değil (şeritler ayrı)
+      if (myAxis === otherAxis) return false;
+      
+      // Eğer çaprazdaki araç kavşak karesinin içindeyse -> DUR!
+      return v.inIntersection;
+    });
+  }
+  
   checkInIntersection() {
     switch(this.direction) {
-      case 'N':
-        return this.y + this.height >= INTERSECTION.top && this.y <= INTERSECTION.bottom;
-      case 'S':
-        return this.y <= INTERSECTION.bottom && this.y + this.height >= INTERSECTION.top;
-      case 'E':
-        return this.x <= INTERSECTION.right && this.x + this.width >= INTERSECTION.left;
-      case 'W':
-        return this.x + this.width >= INTERSECTION.left && this.x <= INTERSECTION.right;
+      case 'N': return this.y + this.height >= INTERSECTION.top && this.y <= INTERSECTION.bottom;
+      case 'S': return this.y <= INTERSECTION.bottom && this.y + this.height >= INTERSECTION.top;
+      case 'E': return this.x <= INTERSECTION.right && this.x + this.width >= INTERSECTION.left;
+      case 'W': return this.x + this.width >= INTERSECTION.left && this.x <= INTERSECTION.right;
     }
     return false;
   }
@@ -231,69 +239,90 @@ class Vehicle {
     const myLight = isNS ? lights.NS : lights.EW;
     
     this.inIntersection = this.checkInIntersection();
-    
     if (this.inIntersection && !this.hasEnteredIntersection) {
       this.hasEnteredIntersection = true;
     }
     
-    const passedIntersection = this.checkPassedIntersection();
-    const vehicleAhead = this.getVehicleAhead(otherVehicles);
-    const safeDistance = 40;
+    const vehicleAheadInfo = this.getVehicleAhead(otherVehicles);
+    const vehicleAhead = vehicleAheadInfo ? vehicleAheadInfo.vehicle : null;
+    const distanceToAhead = vehicleAheadInfo ? vehicleAheadInfo.distance : Infinity;
     
-    if (this.hasEnteredIntersection || passedIntersection) {
-      if (vehicleAhead && vehicleAhead.distance < safeDistance) {
-        if (vehicleAhead.distance < 3) {
-          this.speed = 0;
-          this.state = 'stopped';
-        } else {
-          this.speed = Math.max(30, this.maxSpeed * (vehicleAhead.distance / safeDistance));
-          this.state = 'following';
-          this.move(dt);
-        }
-      } else {
-        this.speed = this.maxSpeed;
-        this.state = 'moving';
-        this.move(dt);
-      }
-    } else {
-      const distanceToStop = this.getDistanceToStopLine();
-      
-      if (vehicleAhead && vehicleAhead.distance < safeDistance) {
-        if (vehicleAhead.distance < 3) {
-          this.speed = 0;
-          this.state = 'stopped';
-        } else {
-          this.speed = Math.max(20, this.maxSpeed * (vehicleAhead.distance / safeDistance));
-          this.state = 'following';
-          this.move(dt);
-        }
-      } else {
-        if (myLight === 'red') {
-          if (distanceToStop > 3) {
-            this.state = 'stopping';
-            this.speed = Math.max(15, this.maxSpeed * Math.min(1, distanceToStop / 80));
-            this.move(dt);
-          } else {
-            this.state = 'stopped';
-            this.speed = 0;
-          }
-        } else if (myLight === 'yellow') {
-          if (distanceToStop < 50) {
-            this.state = 'moving';
-            this.speed = this.maxSpeed;
-            this.move(dt);
-          } else {
-            this.state = 'stopping';
-            this.speed = Math.max(20, this.maxSpeed * 0.4);
-            this.move(dt);
-          }
-        } else {
-          this.state = 'moving';
-          this.speed = this.maxSpeed;
-          this.move(dt);
-        }
+    // FİZİK AYARLARI
+    const SAFE_FOLLOW_DISTANCE = 8;
+    const BRAKING_DISTANCE = 60;
+    const YELLOW_LIGHT_DISTANCE = 60;
+
+    let targetSpeed = this.maxSpeed;
+
+    // 1. ÖNDEKİ ARAÇ KONTROLÜ
+    if (vehicleAhead) {
+      if (distanceToAhead <= SAFE_FOLLOW_DISTANCE) {
+        targetSpeed = 0;
+        this.state = 'stopped';
+      } else if (distanceToAhead < BRAKING_DISTANCE) {
+        const factor = (distanceToAhead - SAFE_FOLLOW_DISTANCE) / (BRAKING_DISTANCE - SAFE_FOLLOW_DISTANCE);
+        targetSpeed = Math.min(this.maxSpeed * factor, vehicleAhead.speed > 10 ? vehicleAhead.speed : this.maxSpeed); 
+        this.state = 'following';
       }
     }
+
+    // 2. KAVŞAK İÇİ ÇARPIŞMA KONTROLÜ (YENİ!)
+    // Eğer henüz kavşağa girmedim ama durma çizgisine çok yakınsam (veya geçmek üzereysem)
+    if (!this.hasEnteredIntersection) {
+        const distToStop = this.getDistanceToStopLine();
+        
+        // Eğer durma çizgisine geldiysem veya geçmek üzereysem (ve ışık yeşilse bile)
+        // Önce ortada çapraz araç kalmış mı diye bak.
+        if (distToStop < 20) {
+            if (this.isIntersectionBlockedByCrossTraffic(otherVehicles)) {
+                // Ortada araba var! Sakın girme.
+                targetSpeed = 0;
+                this.state = 'waiting_clearance';
+            }
+        }
+    }
+
+    // 3. TRAFİK IŞIĞI KONTROLÜ
+    if (!this.hasEnteredIntersection && !this.checkPassedIntersection()) {
+      const distToStop = this.getDistanceToStopLine();
+      
+      // Eğer hedef hızımız "Waiting Clearance" yüzünden zaten 0 ise ışığa bakma, bekle.
+      if (targetSpeed > 0 || this.state !== 'waiting_clearance') { 
+        if (myLight === 'red') {
+          if (distToStop <= 5 && distToStop >= -10) {
+            targetSpeed = 0;
+            this.state = 'stopped';
+          } else if (distToStop < BRAKING_DISTANCE && distToStop > 0) {
+            targetSpeed = Math.min(targetSpeed, this.maxSpeed * (distToStop / BRAKING_DISTANCE));
+            this.state = 'stopping';
+          }
+        } else if (myLight === 'yellow') {
+          if (distToStop > YELLOW_LIGHT_DISTANCE) {
+             targetSpeed = Math.min(targetSpeed, this.maxSpeed * (distToStop / (BRAKING_DISTANCE + 20)));
+             if (distToStop < 20) targetSpeed = 0;
+             this.state = 'stopping';
+          } else {
+             targetSpeed = this.maxSpeed; // Dönülmez noktadaysan bas geç
+          }
+        }
+      }
+    } else {
+        // Kavşak içindeyiz veya geçtik -> Alanı hemen terk et
+        if (!vehicleAhead || distanceToAhead > SAFE_FOLLOW_DISTANCE + 20) {
+             targetSpeed = this.maxSpeed; 
+        }
+    }
+
+    // İvmelenme/Frenleme
+    if (this.speed < targetSpeed) {
+      this.speed += 250 * dt;
+      if (this.speed > targetSpeed) this.speed = targetSpeed;
+    } else if (this.speed > targetSpeed) {
+      this.speed -= 350 * dt;
+      if (this.speed < targetSpeed) this.speed = targetSpeed;
+    }
+
+    this.move(dt);
     
     if (this.checkOffScreen()) {
       this.state = 'passed';
@@ -312,15 +341,12 @@ class Vehicle {
   
   getDistanceToStopLine() {
     switch(this.direction) {
-      case 'N':
-        return Math.max(0, this.stopLine - (this.y + this.height));
-      case 'S':
-        return Math.max(0, this.y - this.stopLine);
-      case 'E':
-        return Math.max(0, this.x - this.stopLine);
-      case 'W':
-        return Math.max(0, this.stopLine - (this.x + this.width));
+      case 'N': return this.stopLine - (this.y + this.height);
+      case 'S': return this.y - this.stopLine;
+      case 'E': return this.x - this.stopLine;
+      case 'W': return this.stopLine - (this.x + this.width);
     }
+    return Infinity;
   }
   
   getVehicleAhead(otherVehicles) {
@@ -330,7 +356,7 @@ class Vehicle {
     for (const other of otherVehicles) {
       if (other.id === this.id || other.direction !== this.direction) continue;
       
-      let distance = 0;
+      let distance = Infinity;
       let isAhead = false;
       
       switch(this.direction) {
@@ -352,7 +378,7 @@ class Vehicle {
           break;
       }
       
-      if (isAhead && distance >= -2 && distance < minDistance) {
+      if (isAhead && distance >= -5 && distance < minDistance) {
         minDistance = distance;
         closestVehicle = other;
       }
@@ -371,11 +397,9 @@ class Vehicle {
   }
   
   checkOffScreen() {
-    // Araçları sadece kavşağı geçtikten SONRA ekran dışına çıktıklarında sil
     const passedIntersection = this.checkPassedIntersection();
-    if (!passedIntersection) return false; // Henüz kavşağı geçmediyse asla silme
+    if (!passedIntersection) return false;
     
-    // Kavşağı geçtikten sonra çok uzağa gittiyse sil
     return this.x < -150 || this.x > canvas.width + 150 || 
            this.y < -150 || this.y > canvas.height + 150;
   }
@@ -392,7 +416,7 @@ class Vehicle {
     ctx.fillRect(this.x, this.y, this.width, this.height);
     
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(100, 150, 200, 0.6)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
     const padding = 5;
     ctx.fillRect(
       this.x + padding, 
@@ -401,29 +425,44 @@ class Vehicle {
       this.height - padding * 2
     );
     
-    ctx.fillStyle = this.state === 'stopped' || this.state === 'stopping' ? '#ff0000' : '#ffff00';
+    const isBraking = this.speed < 20; 
+    
     if (this.direction === 'N' || this.direction === 'S') {
-      const lightY = this.direction === 'N' ? this.y + this.height - 8 : this.y + 3;
-      ctx.fillRect(this.x + 5, lightY, 6, 5);
-      ctx.fillRect(this.x + this.width - 11, lightY, 6, 5);
+        const tailY = this.direction === 'N' ? this.y : this.y + this.height - 5;
+        const headY = this.direction === 'N' ? this.y + this.height - 5 : this.y;
+        
+        ctx.fillStyle = isBraking ? '#ff0000' : '#550000';
+        ctx.fillRect(this.x + 5, tailY, 6, 5);
+        ctx.fillRect(this.x + this.width - 11, tailY, 6, 5);
+        
+        ctx.fillStyle = '#ffffaa';
+        ctx.fillRect(this.x + 5, headY, 6, 5);
+        ctx.fillRect(this.x + this.width - 11, headY, 6, 5);
+        
     } else {
-      const lightX = this.direction === 'W' ? this.x + this.width - 8 : this.x + 3;
-      ctx.fillRect(lightX, this.y + 5, 5, 6);
-      ctx.fillRect(lightX, this.y + this.height - 11, 5, 6);
+        const tailX = this.direction === 'W' ? this.x : this.x + this.width - 5;
+        const headX = this.direction === 'W' ? this.x + this.width - 5 : this.x;
+
+        ctx.fillStyle = isBraking ? '#ff0000' : '#550000';
+        ctx.fillRect(tailX, this.y + 5, 5, 6);
+        ctx.fillRect(tailX, this.y + this.height - 11, 5, 6);
+        
+        ctx.fillStyle = '#ffffaa';
+        ctx.fillRect(headX, this.y + 5, 5, 6);
+        ctx.fillRect(headX, this.y + this.height - 11, 5, 6);
     }
     
     ctx.restore();
   }
 }
 
+// --- ÇİZİM FONKSİYONLARI ---
 function drawRoads() {
   ctx.fillStyle = '#16a34a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   
   ctx.fillStyle = '#374151';
   ctx.fillRect(CENTER_X - ROAD_WIDTH, 0, ROAD_WIDTH * 2, canvas.height);
-  
-  ctx.fillStyle = '#374151';
   ctx.fillRect(0, CENTER_Y - ROAD_WIDTH, canvas.width, ROAD_WIDTH * 2);
   
   ctx.fillStyle = '#1f2937';
@@ -438,49 +477,19 @@ function drawLaneMarkings() {
   ctx.lineWidth = 3;
   ctx.setLineDash([20, 15]);
   
-  ctx.beginPath();
-  ctx.moveTo(CENTER_X, 0);
-  ctx.lineTo(CENTER_X, INTERSECTION.top);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(CENTER_X, INTERSECTION.bottom);
-  ctx.lineTo(CENTER_X, canvas.height);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(0, CENTER_Y);
-  ctx.lineTo(INTERSECTION.left, CENTER_Y);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(INTERSECTION.right, CENTER_Y);
-  ctx.lineTo(canvas.width, CENTER_Y);
-  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CENTER_X, 0); ctx.lineTo(CENTER_X, INTERSECTION.top); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CENTER_X, INTERSECTION.bottom); ctx.lineTo(CENTER_X, canvas.height); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, CENTER_Y); ctx.lineTo(INTERSECTION.left, CENTER_Y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(INTERSECTION.right, CENTER_Y); ctx.lineTo(canvas.width, CENTER_Y); ctx.stroke();
   
   ctx.strokeStyle = '#f3f4f6';
   ctx.lineWidth = 4;
   ctx.setLineDash([]);
   
-  ctx.beginPath();
-  ctx.moveTo(CENTER_X - ROAD_WIDTH, 0);
-  ctx.lineTo(CENTER_X - ROAD_WIDTH, canvas.height);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(CENTER_X + ROAD_WIDTH, 0);
-  ctx.lineTo(CENTER_X + ROAD_WIDTH, canvas.height);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(0, CENTER_Y - ROAD_WIDTH);
-  ctx.lineTo(canvas.width, CENTER_Y - ROAD_WIDTH);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(0, CENTER_Y + ROAD_WIDTH);
-  ctx.lineTo(canvas.width, CENTER_Y + ROAD_WIDTH);
-  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CENTER_X - ROAD_WIDTH, 0); ctx.lineTo(CENTER_X - ROAD_WIDTH, canvas.height); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CENTER_X + ROAD_WIDTH, 0); ctx.lineTo(CENTER_X + ROAD_WIDTH, canvas.height); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, CENTER_Y - ROAD_WIDTH); ctx.lineTo(canvas.width, CENTER_Y - ROAD_WIDTH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, CENTER_Y + ROAD_WIDTH); ctx.lineTo(canvas.width, CENTER_Y + ROAD_WIDTH); ctx.stroke();
 }
 
 function drawStopLines() {
@@ -488,25 +497,10 @@ function drawStopLines() {
   ctx.lineWidth = 5;
   ctx.setLineDash([]);
   
-  ctx.beginPath();
-  ctx.moveTo(INTERSECTION.left, INTERSECTION.top);
-  ctx.lineTo(CENTER_X, INTERSECTION.top);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(CENTER_X, INTERSECTION.bottom);
-  ctx.lineTo(INTERSECTION.right, INTERSECTION.bottom);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(INTERSECTION.right, INTERSECTION.top);
-  ctx.lineTo(INTERSECTION.right, CENTER_Y);
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.moveTo(INTERSECTION.left, CENTER_Y);
-  ctx.lineTo(INTERSECTION.left, INTERSECTION.bottom);
-  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(INTERSECTION.left, INTERSECTION.top); ctx.lineTo(CENTER_X, INTERSECTION.top); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CENTER_X, INTERSECTION.bottom); ctx.lineTo(INTERSECTION.right, INTERSECTION.bottom); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(INTERSECTION.right, INTERSECTION.top); ctx.lineTo(INTERSECTION.right, CENTER_Y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(INTERSECTION.left, CENTER_Y); ctx.lineTo(INTERSECTION.left, INTERSECTION.bottom); ctx.stroke();
 }
 
 function drawTrafficLights(lights) {
@@ -526,78 +520,46 @@ function drawLight(x, y, state) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x - 14, y - 14, 28, 90);
   
-  ctx.fillStyle = state === 'red' ? '#ef4444' : '#3f3f46';
-  ctx.beginPath();
-  ctx.arc(x, y, lightSize / 2, 0, Math.PI * 2);
-  ctx.fill();
-  if (state === 'red') {
-    ctx.shadowColor = '#ef4444';
-    ctx.shadowBlur = 20;
+  const drawBulb = (offset, color, activeColor) => {
+    ctx.fillStyle = state === color ? activeColor : '#3f3f46';
+    ctx.beginPath();
+    ctx.arc(x, y + offset, lightSize / 2, 0, Math.PI * 2);
     ctx.fill();
-    ctx.shadowBlur = 0;
-  }
-  
-  ctx.fillStyle = state === 'yellow' ? '#fbbf24' : '#3f3f46';
-  ctx.beginPath();
-  ctx.arc(x, y + spacing, lightSize / 2, 0, Math.PI * 2);
-  ctx.fill();
-  if (state === 'yellow') {
-    ctx.shadowColor = '#fbbf24';
-    ctx.shadowBlur = 20;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  }
-  
-  ctx.fillStyle = state === 'green' ? '#22c55e' : '#3f3f46';
-  ctx.beginPath();
-  ctx.arc(x, y + spacing * 2, lightSize / 2, 0, Math.PI * 2);
-  ctx.fill();
-  if (state === 'green') {
-    ctx.shadowColor = '#22c55e';
-    ctx.shadowBlur = 20;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  }
+    if (state === color) {
+      ctx.shadowColor = activeColor;
+      ctx.shadowBlur = 20;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  };
+
+  drawBulb(0, 'red', '#ef4444');
+  drawBulb(spacing, 'yellow', '#fbbf24');
+  drawBulb(spacing * 2, 'green', '#22c55e');
 }
 
+// --- ANA DÖNGÜ ---
 function spawnVehicles(dt) {
-  for (let i = 0; i < TRAFFIC_DATA.length; i++) {
-    const data = TRAFFIC_DATA[i];
-    const spawnKey = `${i}-${data.time}-${data.direction}`;
-    
-    if (!processedSpawns.has(spawnKey) && simTime >= data.time) {
-      processedSpawns.add(spawnKey);
-      
-      for (let j = 0; j < data.count; j++) {
-        spawnQueue.push({
-          direction: data.direction,
-          spawnTime: simTime + (j * 0.8), // Biraz daha uzun aralık
-          offset: j * 70 // Daha fazla boşluk
-        });
-      }
-    }
-  }
+  simulateLiveTraffic(simTime);
   
   spawnQueue = spawnQueue.filter(item => {
     if (simTime >= item.spawnTime) {
-      const vehicle = new Vehicle(item.direction);
-      
-      // Araçları ekran dışında yerleştir
-      switch(item.direction) {
-        case 'N':
-          vehicle.y = -120 - item.offset; // Daha uzaktan başla
-          break;
-        case 'S':
-          vehicle.y = canvas.height + 120 + item.offset;
-          break;
-        case 'E':
-          vehicle.x = canvas.width + 120 + item.offset;
-          break;
-        case 'W':
-          vehicle.x = -120 - item.offset;
-          break;
+      const isBlocked = vehicles.some(v => {
+          if (v.direction !== item.direction) return false;
+          let blocked = false;
+          if (item.direction === 'N' && v.y < -50) blocked = true;
+          if (item.direction === 'S' && v.y > canvas.height + 50) blocked = true;
+          if (item.direction === 'E' && v.x > canvas.width + 50) blocked = true;
+          if (item.direction === 'W' && v.x < -50) blocked = true;
+          return blocked;
+      });
+
+      if (isBlocked) {
+          item.spawnTime += 0.5;
+          return true;
       }
-      
+
+      const vehicle = new Vehicle(item.direction);
       vehicles.push(vehicle);
       return false;
     }
@@ -615,7 +577,6 @@ function render(timestamp) {
     spawnVehicles(dt);
     
     const lights = smartMode ? updateSmartLights(dt) : getClassicLightState(simTime);
-    
     vehicles.forEach(v => v.update(dt, lights, vehicles));
     
     vehicles = vehicles.filter(v => {
@@ -629,7 +590,6 @@ function render(timestamp) {
     drawRoads();
     drawTrafficLights(lights);
     vehicles.forEach(v => v.draw());
-    
     updateStats();
   }
   
@@ -645,6 +605,7 @@ function updateStats() {
   document.getElementById('ewCount').textContent = density.ewWaiting;
 }
 
+// Event Listeners
 document.getElementById('startBtn').addEventListener('click', () => {
   isRunning = !isRunning;
   document.getElementById('startBtn').textContent = isRunning ? '⏸ Duraklat' : '▶ Başlat';
@@ -655,7 +616,6 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   isRunning = false;
   simTime = 0;
   lastTime = 0;
-  processedSpawns.clear();
   spawnQueue = [];
   vehicles = [];
   passedVehicles = 0;
@@ -664,6 +624,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   SMART_LIGHT.timeInCurrentState = 0;
   SMART_LIGHT.isYellow = false;
   SMART_LIGHT.yellowStartTime = 0;
+  AI_BRAIN.qTable = {};
   document.getElementById('startBtn').textContent = '▶ Başlat';
   updateStats();
   drawRoads();
@@ -689,22 +650,14 @@ if (dirButtons.length > 0) {
       const count = countInput ? parseInt(countInput.value) || 1 : 1;
       
       for (let i = 0; i < count; i++) {
-        const vehicle = new Vehicle(direction);
-        const spacing = 60;
-        switch(direction) {
-          case 'N': vehicle.y -= i * spacing; break;
-          case 'S': vehicle.y += i * spacing; break;
-          case 'E': vehicle.x += i * spacing; break;
-          case 'W': vehicle.x -= i * spacing; break;
-        }
-        vehicles.push(vehicle);
+        spawnQueue.push({
+            direction: direction,
+            spawnTime: simTime + (i * 0.8)
+        });
       }
       
       btn.style.transform = 'scale(0.95)';
-      setTimeout(() => {
-        btn.style.transform = '';
-      }, 100);
-      
+      setTimeout(() => btn.style.transform = '', 100);
       updateStats();
     });
   });
@@ -719,7 +672,7 @@ if (vehicleCountInput && countDisplay) {
   });
 }
 
+// Başlat
 drawRoads();
 drawTrafficLights({ NS: 'red', EW: 'red' });
 render(0);
-
