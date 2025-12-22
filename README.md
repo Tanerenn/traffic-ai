@@ -1,4 +1,5 @@
-<img width="890" height="790" alt="image" src="https://github.com/user-attachments/assets/79e250b6-8cba-4a5c-bdf7-e0e72a8c57cd" />
+
+<img width="890" height="789" alt="image" src="https://github.com/user-attachments/assets/8bec803e-bf38-46f2-85cc-06a0c021f04d" />
 
 
 💡 Proje Ne Yapıyor?
