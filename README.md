@@ -33,7 +33,19 @@ Yerel bir sunucuda açmanız gerekiyor. En kolayı:
 
 Eğer kendi verinizi denemek isterseniz `traffic_data.csv` dosyasını şu formatta düzenleyebilirsiniz:
 
-```csv
+csv
 date,time,direction,number
 2022.05.24,17:00:01,North,2
 2022.05.24,17:00:25,South,1
+
+🔗 Veri Kaynağı ve Referanslar
+
+Bu projede kullanılan trafik verileri, gerçek dünya senaryolarını yansıtmak amacıyla Bremen, Almanya'daki bir kavşaktan alınan aşağıdaki akademik veri setinden derlenmiştir:
+
+> 📄 **CN+: Vehicular Dataset at Traffic Light Regulated Intersection in Bremen, Germany**
+>
+> 👤 *Yazarlar:* Thenuka Karunathilake, Meyo Zongo, Dinithi Amarawardana, Anna Förster
+> 🏛️ *Dergi:* Nature Scientific Data
+> 📅 *Yayın Tarihi:* 22 Haziran 2024
+> 🔗 [Makaleyi İncele](https://www.nature.com/articles/s41597-024-03498-4)
+
