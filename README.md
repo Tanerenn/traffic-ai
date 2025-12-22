@@ -3,17 +3,22 @@
 
 💡 Proje Ne Yapıyor?
 
-1.  **Gerçek Veri Okuma:** `traffic_data.csv` dosyasındaki tarih, saat ve yön verilerini okuyor. Araçlar bu saatlere tam uyacak şekilde yola çıkıyor.
-2.  **Akıllı Işık Yönetimi:** Klasik (süreye bağlı) trafik ışıkları yerine, kavşaktaki kuyruğa bakan bir sistem var. Hangi tarafta daha çok araç bekliyorsa o tarafa yeşil yakıyor.
-3.  **Çarpışma Önleme:** Araçlar kavşak ortası doluysa, yeşil yansa bile ilerlemiyor ("Waiting Clearance" durumu).
-4.  **Canvas Çizimi:** Tüm araçlar ve yollar HTML5 Canvas kullanılarak dinamik olarak çizdiriliyor.
+1.  **Anlık Analiz:** Sistem sürekli olarak kuzey, güney, doğu ve batı şeritlerindeki araç sayısını sayar.
+2.  **AI Karar Mekanizması (Q-Learning Mantığı):** Hangi tarafta kuyruk daha uzunsa, sistem önceliği o tarafa verir.
+3.  **Agresif Optimizasyon:** Eğer bir tarafta araç yoksa, ışığı hemen kırmızıya çevirip bekleyen diğer tarafa yeşil yakar. Boşuna bekleme olmaz.
+
+## 📂 Veri Odaklı Simülasyon
+
+Sistem rastgele araç üretmek yerine, gerçek dünyadan alınmış verileri kullanır:
+
+* **CSV Entegrasyonu:** `traffic_data.csv` dosyasındaki gerçek tarih/saat verilerini okur.
+* **Gerçekçi Akış:** Veri setindeki yoğunluk neyse, ekrana o yansır.
 
 ## 🛠️ Kullandığım Teknolojiler
 
-* **HTML5 & CSS3:** Sayfa düzeni ve stil işlemleri için.
-* **JavaScript (Vanilla):** Herhangi bir kütüphane kullanmadan tüm mantığı saf JS ile yazdım.
-* **HTML5 Canvas:** Animasyon ve çizimler için.
-
+* **JavaScript (Vanilla):** Tüm yapay zeka ve simülasyon mantığını saf JavaScript ile yazdım.
+* **HTML5 Canvas:** Araçların ve yolların dinamik çizimi için.
+* **Fetch API:** CSV verilerini okumak ve işlemek için.
 ## 🚀 Nasıl Çalıştırırsınız?
 
 Bu proje dışarıdan bir veri dosyası (`.csv`) okuduğu için tarayıcı güvenlik kuralları gereği direkt çift tıklayarak açıldığında çalışmayabilir.
